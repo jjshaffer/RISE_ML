@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import json
 import os
 import re
+import sys
 
 import ML_Binary_Classifier
 
@@ -130,11 +131,14 @@ def RISE_Test(model, input_tensor, ans_tensor, iterations, mask_p):
     return Cumulative_Input_Weights, Cumulative_Mask
 
 def combine_RISE_results(filename, maskfilename, thresh_flag):
+    """Function for calculating the results of a single RISE test """
+    
     #Read raw RISE scores
     RISE_data = pd.read_csv(filename)
-    
+    #Read corresponding mask
     MASK_data = pd.read_csv(maskfilename)
     
+    #Calculate the number of iterations in this test
     Num_Trials = MASK_data * RISE_data.shape[0]
     print(Num_Trials)
     
@@ -147,6 +151,8 @@ def combine_RISE_results(filename, maskfilename, thresh_flag):
     RISE_Accuracy = totals.values/Num_Trials
     print(RISE_Accuracy)
     
+    
+    #Standardize results as Z-score
     RISE_Mean = totals.mean(axis = 0)
     RISE_STD = totals.std(axis=0)
 
@@ -154,6 +160,7 @@ def combine_RISE_results(filename, maskfilename, thresh_flag):
     DeMeaned_RISE_Results = totals - RISE_Mean
     z_score_RISE_Results = DeMeaned_RISE_Results/RISE_STD
     
+    #Check if results should be thresholded
     if thresh_flag == 1:
         thresholded_z_score = np.where(z_score_RISE_Results > 1.96, z_score_RISE_Results, 0)
     
@@ -173,8 +180,8 @@ def combine_RISE_results(filename, maskfilename, thresh_flag):
 
 """ Functions for Permutation Testing RISE """
 
-#Function for performing the first step of the RISE function in parallel. Each instance generates 1000 masks and uses the model to produce 1000 predictions
 def run_RISE_Parallel(model_name, D_in, H, D_out, data_file, var_name, iteration, cycles, mask_p, outprefix):
+    """ Function for performing the first step of the RISE function in parallel. Each instance generates 1000 masks and uses the model to produce 1000 predictions """
     model = ML_Binary_Classifier.load_model(model_name, D_in, H, D_out)
     input_tensor, ans_tensor, subjIDs = ML_Binary_Classifier.load_sorted_test_data(data_file, var_name)
     
@@ -224,9 +231,8 @@ def run_RISE_Parallel(model_name, D_in, H, D_out, data_file, var_name, iteration
         
     return RISE_results, RISE_masks
 
-#Function for running permutation testing of RISE method using the output of run_RISE_Parallel. This creates files of up to 1000
 def run_RISE_Simulation(fileprefix, file_index_max, num_iterations, step_size, subjects, features):
-    
+    """ Function for running permutation testing of RISE method using the output of run_RISE_Parallel. This creates files of up to 1000"""
     file_list = random.sample(range(1,file_index_max+1), file_index_max)
     results = np.zeros((subjects, features), dtype=float)
     
@@ -278,74 +284,57 @@ def run_RISE_Simulation(fileprefix, file_index_max, num_iterations, step_size, s
     return results
 
 
-#def run_RISE_Simulation_Experiment(fileprefix, start_range, end_range, step_size, subjects, features, i):
-    
-#    trial_list = range(start_range,end_range, step_size)
-    
-#    prev_trial = np.zeros((subjects, features), dtype=float)
-    
-    #for n in trial_list:
-#    n = trial_list[i]
-    
-#    out = run_RISE_Simulation(fileprefix,n, max_iterations, subjects, features)
-    
-
-#    filename = fileprefix + '_trials_'+str(n)+'.json'    
-#    out = out.tolist()
-#    with open(filename, 'w') as f:
-#        json.dump(out, f)
-#        f.close()
-
-#    return out
-
-#Function for compiling distributions of model accuracies
-    
-def compile_subject_frequencies(model_path):
+def compile_subject_frequencies(model_path, acc_thresh):
+    """ Function for compiling distributions of model accuracies"""
     #Get list of files in directory
     file_list = [f for f in os.listdir(model_path) if os.path.isfile(os.path.join(model_path, f))]
     
+    #Initialize variables
     subj_list = dict()
     max_trials = 0;
     
+    #Loop through each file in the directory
     for i in range(0,len(file_list)):
+        #Identify the files containing the test set data
         if re.search(r"test\_data\.csv", file_list[i]):
             print(file_list[i])
             
+            #Parse accuracy from filename
             tmp = file_list[i].split('_')
             for j in range(0,len(tmp)):
                 if tmp[j]== 'acc':
                     acc = float(tmp[j+1])
                     #print(str(acc))
                     
+            if acc >= acc_thresh:
+                #Open file as dataframe
+                file_name = model_path + '/' + file_list[i]
+                file_data = pd.read_csv(file_name)
+                id_list = file_data['Participant_ID']
             
-            #Open file as dataframe
-            file_name = model_path + '/' + file_list[i]
-            file_data = pd.read_csv(file_name)
-            id_list = file_data['Participant_ID']
-            
-            for j in range(0,len(id_list)):
+                for j in range(0,len(id_list)):
                 
-                if id_list[j] in subj_list:
-                    #Add to count, weighted sum
-                    temp = subj_list.get(id_list[j])
+                    if id_list[j] in subj_list:
+                        #Add to count, weighted sum
+                        temp = subj_list.get(id_list[j])
                     
-                    temp[0]+= 1
-                    temp[1]+= acc
+                        temp[0]+= 1
+                        temp[1]+= acc
                     
-                    if temp[0] > max_trials:
-                        max_trials = temp[0]
+                        if temp[0] > max_trials:
+                            max_trials = temp[0]
                     
-                    temp.append(acc)
+                        temp.append(acc)
                     
-                    subj_list[id_list[j]]= temp
-                    #acc=[1,acc]
+                        subj_list[id_list[j]]= temp
+                        #acc=[1,acc]
                     
-                    #temp = [temp[i] + acc[i] for i in range(len(temp))]
+                        #temp = [temp[i] + acc[i] for i in range(len(temp))]
                     
-                    subj_list[id_list[j]] = temp
-                else:
-                    #Create key
-                    subj_list[id_list[j]] = [1, acc, acc]
+                        subj_list[id_list[j]] = temp
+                    else:
+                        #Create key
+                        subj_list[id_list[j]] = [1, acc, acc]
                     
     #print(str(max_trials))
     
@@ -366,7 +355,7 @@ def compile_subject_frequencies(model_path):
     return subj_data
 
 def sort_by_index(a,b, a_col):
-    
+    """ Function for sorting data from one dataframe into another based on matching 0 column values"""
     for i in range(0,len(a)):
         for j in range(0,len(b)):
             if a.iloc[i,0] == b.iloc[j,0]:
@@ -375,8 +364,9 @@ def sort_by_index(a,b, a_col):
                 
     return a
 
+
 def calc_z_normalized_df(t, col_range):
-    
+    """ Function for z-score normaliziong dataframe columns"""
     tz = pd.DataFrame(np.zeros(t.shape, dtype=float))
     
     tz.iloc[:,0] = t.iloc[:,0]
@@ -389,9 +379,8 @@ def calc_z_normalized_df(t, col_range):
         
     return tz
         
-
 def graph_subject_influence(t, num_trials, x_labels, outprefix):
-    
+    """Function to generate line graph of effect of individual participants' inclusion in verification set """
     x = range(0,num_trials)
     
     for i in range(len(t)):
@@ -408,10 +397,49 @@ def graph_subject_influence(t, num_trials, x_labels, outprefix):
     outfilename = outprefix + '.jpg'
         
     plt.savefig(outfilename, dpi = 300)
+    
+def get_column_labels(filename, data_start_column_label, data_end_column_label):
+    """ Function for retrieving the list of feature labels between a start and end column label """
+    all_data = pd.read_csv(filename)
+    imaging_variables = all_data.loc[:, data_start_column_label:data_end_column_label]
+    column_labels = imaging_variables.columns.tolist()
+    
+    return column_labels
+    
+def get_best_models(model_path, num_iters, acc_thresh, ver_acc_thresh):
+    """ Function for identifying the best models by thresholding the accuracy of the verification and test sets"""
+    #Get list of files in directory
+    file_list = [f for f in os.listdir(model_path) if os.path.isfile(os.path.join(model_path, f))]
+    
+    name_list = []
+    
+    for i in range(0,len(file_list)):
+        if re.search(r"verification\_data\.csv", file_list[i]):
+            #print(file_list[i])
+           
+            name = ''
+            tmp = file_list[i].split('_')
+            for j in range(0,len(tmp)):
+                if tmp[j] == 'ver-acc':
+                    ver_acc = float(tmp[j+1])
+                       
+                if tmp[j]== 'acc':
+                    acc = float(tmp[j+1])
+                
+                    
+             
 
+            name = file_list[i].replace('_verification_data.csv', '')
+            name = re.sub(r'ver\-acc\_[\.0-9]*_', '', name)
+            
+            
+            if (acc>= acc_thresh and ver_acc >= ver_acc_thresh):
+                print(file_list[i] + ': ' + name)
+                name_list.append(name)
+    return name_list
 
 def compile_model_accuracies(model_path, num_iters):
-    
+    """ Function for scraping model accuracies from filenames in given directory"""
     #Get list of files in directory
     file_list = [f for f in os.listdir(model_path) if os.path.isfile(os.path.join(model_path, f))]
 
@@ -433,7 +461,7 @@ def compile_model_accuracies(model_path, num_iters):
     return acc
 
 def graph_accuracy_histogram(acc_list, label_list, list_range, outprefix):
-    
+    """Function for generating a histogram of the distribution of model accuracies """
     #a, b = np.histogram(acc_list, bins=10, range=(0,1))
     
     if len(acc_list) == len(label_list):
@@ -463,8 +491,9 @@ def graph_accuracy_histogram(acc_list, label_list, list_range, outprefix):
 
     return acc_df
 
-#Function for calculating the Mean Squared Error (or Mean Absolute Error) between subsequently increasing numbers of RISE trials. The goal is to test whether the models converge.
 def calc_RISE_MSD(prefix, start_range, end_range, step_size, outfile):
+    """Function for calculating the Mean Squared Error (or Mean Absolute Error) between subsequently increasing numbers of RISE trials. The goal is to test whether the models converge."""
+
     sizes = range(start_range, end_range, step_size)
     
     #Load the first file
@@ -586,17 +615,8 @@ def generate_mask(h,w,H,W,p):
     return Mask
 
 def find_Consensus_Results(filepath, filelist, col_names, outfileprefix):
-    
+    """ Function for finding sorted list of important features across models supplied as filelist """
     results = []
-    
-    #fig, ax0 = plt.subplots(figsize=(48.0, 10.0))
-    #ax0.set_title('RISE Effect of Each Feature Across Models:')
-    #ax0.set_ylabel('Mean z-stat')
-    #ax0.set_xlabel('Imaging Measure')
-    
-    #plt.xticks(rotation = 'vertical', fontsize = 4)
-    
-    #plt.subplots_adjust(bottom=0.5)
     
     #Loop through each file in list
     for i in range(0,len(filelist)):
@@ -617,29 +637,20 @@ def find_Consensus_Results(filepath, filelist, col_names, outfileprefix):
         
         results.append(sum_list)
         
-      
-        #if i == 0:
-         #   p1 = ax0.bar(col_names, sum_list)
-          #  prev_list = sum_list
-        #else:
-         #   p1 = ax0.bar(col_names, sum_list, bottom=prev_list)
-          #  prev_list = sum_list
-
-
-    
+         
+    #Calculate cumulative sum of effect across models    
     results_df = pd.DataFrame(data=results, columns=col_names)
-    
     results_sum = np.mean(results, axis=0)
     results_sum = results_sum.reshape(1, len(results_sum))
     results_sum = pd.DataFrame(data=results_sum, columns=col_names)
 
+    #Sort features by cumulative sum of effect on models
     sorted_sum = results_sum.sort_values(by=results_sum.index[0], axis=1)
     sorted_results = results_df[sorted_sum.columns]
 
     transpose_results = sorted_results.transpose()
     
-    
-    
+    #Generate Figure showing cumulative and relative contributions of each feature in each model   
     ax0 = transpose_results.plot(kind="bar", stacked=True, figsize=(48.0, 10.0), title='RISE Effect of Each Feature Across Models')
     ax0.set_ylabel('Cumulative z-stat')
     ax0.set_xlabel('Imaging Measure')
@@ -654,16 +665,40 @@ def find_Consensus_Results(filepath, filelist, col_names, outfileprefix):
     
     return sorted_results, col_names, transpose_results
 
-def RISE_Test_Model(fileprefix, data_start_column_label, data_end_column_label, acc_thresh):
-
+def RISE_Test_Model_BASH_wrapper():
+    """ Function for calling RISE_Test_Model from a BASH Script for Cluster submission. Reads the argument input to get needed variables """
     
+    #Loop through arguments and print them
+    for i in range(0,len(sys.argv)):
+        print("arg: ", str(i), ": ", str(sys.argv[i]), ':', str(type(sys.argv[i])))
+    
+    
+    #Set input variables for RISE_Test_Model
+    fileprefix=sys.argv[1] 
+    data_start_column_label=sys.argv[2] 
+    data_end_column_label=sys.argv[3]
+    acc_thresh=float(sys.argv[4])
+     
+    #Call RISE_Test_Model
+    trials_results = RISE_Test_Model(fileprefix, data_start_column_label, data_end_column_label, acc_thresh)
+    return trials_results
+
+
+
+def RISE_Test_Model(fileprefix, data_start_column_label, data_end_column_label, acc_thresh):
+    """ Function for performing RISE on a single pytorch model with thresholding """
+    
+    #Initialize variables
     modelfile = fileprefix + '_model.pt'
+    test_data_file = fileprefix + '_test_data.csv'
     In = 0
     H = 0
     Out = 0
-    acc =0
-    tmp = fileprefix.split('_')
+    acc = 0
     
+    
+    #Tokenize model filename to read accuracy and layer sizes
+    tmp = fileprefix.split('_')
     for i in range(0,len(tmp)):
         if tmp[i] =='In':
             In = int(tmp[i+1])
@@ -676,23 +711,23 @@ def RISE_Test_Model(fileprefix, data_start_column_label, data_end_column_label, 
     
     #Exit if accuracy is too low
     if acc < acc_thresh:
-        print('Accuracy below threshold')
-        return 0, 0, 0
+        print('Accuracy below threshold: ' + str(acc))
+        return 0
     
+    #Load the predictive model
     model = ML_Binary_Classifier.load_model(modelfile, In, H, Out)
-    
-    test_data_file = fileprefix + '_test_data.csv'
-    
-    #data_start_column_label = 'ctx_rh_posterior_insula'
-    #data_end_column_label = 'T1rho_VenousBlood'
-    
+     
     #Variable & input ranges are hard coded for now, should be modified for more generalizable usage
     input_tensor, ans_tensor = ML_Binary_Classifier.load_input_data(test_data_file, 'Group', data_start_column_label, data_end_column_label)
     
+    #Read datafile for "verification" set (note names are swapped in code)
     all_data = pd.read_csv(test_data_file)
     imaging_variables = all_data.loc[:, data_start_column_label:data_end_column_label]
+    
+    #Get list of column labels
     column_labels = imaging_variables.columns.tolist()
     
+    #Get list of subject IDS
     subjIDs = all_data['Participant_ID'].tolist()
     
     #Number of iterations and masking probability hard-coded, could be modified for more generalizable usage
@@ -716,15 +751,12 @@ def RISE_Test_Model(fileprefix, data_start_column_label, data_end_column_label, 
     graph_name = fileprefix + '_AccGraph'
     generate_acc_figure(trials_results['h'].tolist(), trials_results['fp'].tolist(), trials_results['fn'].tolist(), graph_name)
 
-
     #Sort by influence size and test removal of features from most to least important
     outfile_name = fileprefix + '_sortedResultsReverse'
     trials_results2 = input_masking_experiment(model, input_tensor, ans_tensor, Cumulative_Input_Weights, outfile_name, column_labels, 1)
 
     graph_name = fileprefix + '_AccGraphReverse'
     generate_acc_figure(trials_results2['h'].tolist(), trials_results2['fp'].tolist(), trials_results2['fn'].tolist(), graph_name)
-
-    
 
     #Save Results of RISE analysis
     RISE_results_df = pd.DataFrame(data=Cumulative_Input_Weights, columns=column_labels, index=subjIDs)
@@ -740,6 +772,7 @@ def RISE_Test_Model(fileprefix, data_start_column_label, data_end_column_label, 
 """ Display Functions """
 
 def deMean_RISE_Results(Cumulative_Input_Weights):
+    """ Function for subtracting the mean of each row of RISE results """
     #calculate mean of each row
     RISE_Row_Means = Cumulative_Input_Weights.mean(axis=1)
     #De-mean each datapoint by subtracting the row mean
@@ -748,6 +781,7 @@ def deMean_RISE_Results(Cumulative_Input_Weights):
     return DeMeaned_RISE_Results
 
 def calc_RISE_zStat(Cumulative_Input_Weights):
+    """ Function for normalizing RISE results for each row to a z-score """
     #Calculate standard deviation for each row
     RISE_Row_STDs = Cumulative_Input_Weights.std(axis=1)
     #De-mean the datapoints
@@ -759,20 +793,19 @@ def calc_RISE_zStat(Cumulative_Input_Weights):
     return z_score_RISE_Results
 
 def input_masking_experiment(model, input_tensor, ans_tensor, Cumulative_Input_Weights, outfileprefix, col_names, sort_direction_flag):
+    """ Function for masking inputs to calculate accuracy, false negatives, and false positives for progressively removing/adding important features in order based on sort_direction_flag """
     
     #Get list of regions sorted by magnitude of z-statistic
     abs_val_flag = 1
+    #Sort results either by ascending or descending importance based on sort_direction_flag (0 = ascending, 1 = descending)
     sorted_region_list_df = generate_Sorted_RegionList(Cumulative_Input_Weights, col_names, abs_val_flag, sort_direction_flag)
     trials = np.zeros((len(col_names), 3), dtype=float)
 
-
+    
     input_df = pd.DataFrame(input_tensor.detach().numpy()).astype('float')
     input_df.columns = col_names
 
-    #Start with empty mask
-    #zero_data = np.zeros(shape=(1, len(col_names)))
-    #mask = pd.DataFrame(zero_data, columns=col_names)
-    
+       
     #Loop through each column
     for i in range(0, len(sorted_region_list_df)):
     #for i in range(0,500):
@@ -801,7 +834,7 @@ def input_masking_experiment(model, input_tensor, ans_tensor, Cumulative_Input_W
         
         print('Trial: ', str(i), ' - H:', str(np.mean(h)))
     
-    
+    #Save accuracy, false positive, false negative results
     trials_df = pd.DataFrame(data=trials, columns = ['h', 'fp', 'fn'])
     filename = outfileprefix + '.json'
     with open(filename, 'w') as f:
@@ -811,7 +844,7 @@ def input_masking_experiment(model, input_tensor, ans_tensor, Cumulative_Input_W
     return trials_df
     
 def generate_Sorted_Mask(sorted_region_list_df, col_names, n):
-    
+    """ Function for generating a binary mask of the first n elements of a sorted list of features """
     zero_data = np.zeros(shape=(1, len(col_names)))
     mask = pd.DataFrame(zero_data, columns=col_names)
     
@@ -823,7 +856,7 @@ def generate_Sorted_Mask(sorted_region_list_df, col_names, n):
     return mask    
     
 def generate_Sorted_RegionList(Cumulative_Input_Weights, col_names, abs_val_flag, sort_direction_flag):
-
+    """ Function for sorting RISE results by the relative importance of features """
     z_score_RISE_Results = calc_RISE_zStat(Cumulative_Input_Weights)
     
     if abs_val_flag==1:
@@ -847,9 +880,12 @@ def generate_Sorted_RegionList(Cumulative_Input_Weights, col_names, abs_val_flag
     return sorted_region_list_df
     
 def generate_Sorted_Bargraph(Cumulative_Input_Weights, outfileprefix, col_names, abs_val_flag):
+    """ Function for generating a sorted bar graph of RISE features by contribution to a model"""
     
+    #Sort features by effect
     sorted_region_list_df = generate_Sorted_RegionList(Cumulative_Input_Weights, col_names, abs_val_flag, 0)
     
+    #Generate Figure of sorted features
     fig, ax0 = plt.subplots(figsize=(48.0, 10.0))
     ax0.set_title('RISE Effect of Each Feature:')
     ax0.set_ylabel('Mean z-stat')
@@ -867,7 +903,7 @@ def generate_Sorted_Bargraph(Cumulative_Input_Weights, outfileprefix, col_names,
     return sorted_region_list_df
 
 def generate_acc_figure(h, fp, fn, outfileprefix):
-    
+    """ Function for creating a plot of model accuracy, false positives, false negatives during region masking """
     #fig, ax0 = plt.subplots(figsize=(48.0, 10.0))
     #c = ax0.pcolor(acc_list)
     
@@ -888,13 +924,12 @@ def generate_acc_figure(h, fp, fn, outfileprefix):
     fig.savefig(outfilename, dpi = 300)
     
 def generate_RISE_figure(Cumulative_Input_Weights, Cumulative_Mask, outfileprefix, subjIDs, col_names):
-    
+    """ Function for generating a figure showing a matrix of the relative effects of each feature on each participant"""
       
     z_score_RISE_Results = calc_RISE_zStat(Cumulative_Input_Weights)
 
     #Save RISE Results
-    
-       
+           
     temp_results_df = pd.DataFrame(Cumulative_Input_Weights)
     #temp_results_df.columns = imaging_variables.columns
     #print(temp_results_df)
@@ -929,13 +964,6 @@ def generate_RISE_figure(Cumulative_Input_Weights, Cumulative_Mask, outfileprefi
     nonzero_columns = (Thresholded_RISE_Results.sum(axis=0) > 0)
     df_select = [i for i, val in enumerate(nonzero_columns) if val]
 
-    #print(str(df_select))
-    
-    
-    
-    #ax0.xticks(rotation = 45)
-    #ax0.set_xticks(range(0,len(col_names)))
-    #ax0.set_xticklabels(col_names)
     
     xlabels = [col_names[i] for i in df_select]
     #print(len(xlabels))
