@@ -28,7 +28,7 @@
 #$ -m n
 
 #E-mail address to send to
-#$ -M joseph-shaffer@uiowa.edu
+#$ -M email@uiowa.edu
 
 #Run as Array Job
 #$ -t 1:10:1
